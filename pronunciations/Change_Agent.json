@@ -101,5 +101,17 @@
   {"word": "Western New York", "say": "Western New York"},
   {"word": "New York City", "say": "New York City"},
   {"word": "Theatre District", "say": "Theatre District"},
-  {"word": "Riverdance", "say": "Riverdance"}
+  {"word": "Riverdance", "say": "Riverdance"},
+  {"word": "Jan.", "say": "January", "note": "month abbreviations are read in full"},
+  {"word": "Feb.", "say": "February"},
+  {"word": "Mar.", "say": "March"},
+  {"word": "Apr.", "say": "April"},
+  {"word": "Jun.", "say": "June"},
+  {"word": "Jul.", "say": "July"},
+  {"word": "Aug.", "say": "August"},
+  {"word": "Sep.", "say": "September"},
+  {"word": "Sept.", "say": "September"},
+  {"word": "Oct.", "say": "October"},
+  {"word": "Nov.", "say": "November"},
+  {"word": "Dec.", "say": "December"}
 ]
