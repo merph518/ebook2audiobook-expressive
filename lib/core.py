@@ -127,12 +127,28 @@ footnote_markup = {
 # the tags that sit inside a line of text. Any other tag (a paragraph, a line break, a list item) ends the line
 inline_tags = {'a', 'abbr', 'b', 'bdi', 'bdo', 'big', 'cite', 'code', 'del', 'dfn', 'em', 'font', 'i', 'ins', 'kbd', 'mark', 'q', 's', 'samp', 'small', 'span', 'strike', 'strong', 'sub', 'sup', 'tt', 'u', 'var'}
 
+# the pause written after a question of one or two words that opens a sentence ("Why?", "But why?") when the text goes
+# on after it, in seconds, so that the question lands. The tag cuts the sentence there; on the engines that add a short
+# silence after a part ending in punctuation (Maya1 among them) the gap comes to about 1 s, twice the 0.5 s of an
+# ordinary sentence end, and on the others to the 0.3 s alone
+short_question_pause = 0.3
+# a question of one or two words (a comma may part them) at the start of the text, after a sentence end or after an
+# escaped SML tag, with the character that comes after the spaces after it
+short_question_re = re.compile(r'(?<=^|[.!?…]\s+|\p{Co}\s*)(?P<question>(?:¿\s*)?[\p{L}\p{N}\'’-]+(?:,?\s+[\p{L}\p{N}\'’-]+)?\?)(?=\s+(?P<next>\S))')
+
 footnote_marker_re = re.compile(r'^[\[\(]?(?:\d{1,4}|[a-z]{1,2}|[ivxlc]{1,6}|[*†‡§¶#]{1,3})[\]\)]?\.?$', re.IGNORECASE)
 footnote_href_re = re.compile(r'#[^#]*(?:note|fn|ftn|edn)', re.IGNORECASE)
 # a number token: digits joined by "." or "," or by a space (or NBSP) only when a 3 digits group follows, i.e. 1 234
 number_token_pattern = r'\d+(?:(?:[.,]|[ \u00A0\u202F](?=\d{3}(?!\d)))\d+)*'
 # word chars that cannot touch a number, CJK scripts excluded as they never put spaces around numbers
 number_glue_class = r'[^\W\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}]'
+# the pause written after a colon that opens what follows it (an explanation, a list, a quote), in seconds: half as
+# long again as the 0.45 s Maya1 leaves at a colon inside a sentence. The audio.cpp engines make a [pause:N] after a
+# colon the whole gap; the other engines add their own short silence after a part that ends on punctuation to it
+colon_pause = 0.65
+# a colon that closes a word (closing quotes, brackets and escaped SML tags aside, and the space French sets before
+# it), with the escaped SML tags right after it, the spaces after those and the character after the spaces
+colon_pause_re = re.compile(r'(?<=(?P<before>[^\W_])[\p{Pe}\p{Pf}"\'\p{Co}]*[ \u00A0\u202F\u2009]?):(?P<tags>\p{Co}*)(?P<space>\s*)(?P<next>\S?)')
 
 ########### Classes
 
@@ -1192,7 +1208,14 @@ def convert2epub(session_id:str)->bool:
                 # written back below as plain UTF-8 for ebook-convert, whatever the source encoding
                 text = read_text_file(file_input)
                 text = text.replace('\r\n', '\n')
-                text = re.sub(r'\n{2,}', f".{TTS_SML['pause']['static']}", text)
+                # a paragraph already ending in hard punctuation (closing quotes and brackets set aside) keeps it:
+                # an added period would win the later punctuation reduction and turn ? or ! into a statement
+                closers = '"\'”’»›)]}」』）】》〉'
+                text = re.sub(
+                    r'(\S*)[ \t]*\n{2,}',
+                    lambda m: m.group(1) + ('' if m.group(1).rstrip(closers)[-1:] in punctuation_split_hard_set else '.') + TTS_SML['pause']['static'],
+                    text
+                )
                 with open(file_input, 'w', encoding='utf-8') as f:
                     f.write(text)
             elif file_ext == '.pdf':
@@ -2113,6 +2136,10 @@ def filter_blocks(session_id:str, idx:int, doc:EpubHtml, stanza_nlp:Pipeline, is
             text = non_text_filter(text)
             # escape all SML tags to not be touched by any text treatment
             text, sml_blocks = escape_sml(text)
+            # with translation on, the blocks are translated after this and an SML tag cuts what the translator sees,
+            # so the colon pause is left out there
+            if not (session.get('translate_enabled') and session.get('translate')):
+                text = mark_colon_pauses(text, sml_blocks)
             # ranges, currencies and percents first so years conversion does not eat 1990-2000, $1500 or 15%
             text = range2words(text, lang)
             text = currency2words(text, lang, lang_iso1, is_num2words_compat)
@@ -2185,6 +2212,7 @@ def filter_blocks(session_id:str, idx:int, doc:EpubHtml, stanza_nlp:Pipeline, is
             msg = legends['msg_normalize_text']
             print(msg)
             text = normalize_text(text, lang, lang_iso1, tts_engine)
+            text = mark_short_question_pauses(text, sml_blocks)
             text = restore_sml(text, sml_blocks)
             # the treatments above set a tag against the word before it and put a space after it: an opening
             # [emphasis] tag goes back against the word it opens on, after a space unless an opening quote or
@@ -2233,11 +2261,11 @@ def get_sentences(session_id:str, text:str)->list|None:
                 i = m.end()
                 last = i
                 continue
-            if ord(sentence[i]) >= sml_escape_tag:
+            if _is_sml_char(sentence[i]):
                 if i > last:
                     parts.append(sentence[last:i])
                 j = i
-                while j < n and ord(sentence[j]) >= sml_escape_tag:
+                while j < n and _is_sml_char(sentence[j]):
                     j += 1
                 parts.append(sentence[i:j])
                 i = j
@@ -2248,8 +2276,13 @@ def get_sentences(session_id:str, text:str)->list|None:
             parts.append(sentence[last:])
         return parts
 
+    def _is_sml_char(c:str)->bool:
+        # an SML tag stands in the text as one character of its own from sml_escape_tag on; the characters
+        # past the last tag are text, such as the full-width comma (U+FF0C) of Chinese and Japanese
+        return sml_escape_tag <= ord(c) < sml_escape_end
+
     def _strip_escaped_sml(s:str)->str:
-        return ''.join(c for c in s if ord(c) < sml_escape_tag)
+        return ''.join(c for c in s if not _is_sml_char(c))
 
     def _clean_len(s:str)->int:
         return len(_strip_escaped_sml(s))
@@ -2289,38 +2322,30 @@ def get_sentences(session_id:str, text:str)->list|None:
             return [text]
 
     def _join_ideogramms(idg_list:list[str])->str:
-        try:
-            buffer = ''
-            prev_latin = False
-            prev_nonlatin = False
-            for token in idg_list:
-                cur_starts_latin = bool(re.match(r'[A-Za-z0-9]', token))
-                cur_starts_nonlatin = bool(re.match(r'[^\x00-\x7F]', token))
-                if buffer:
-                    if (prev_latin and (cur_starts_latin or cur_starts_nonlatin)) or (prev_nonlatin and cur_starts_latin):
-                        buffer += ' '
-                    elif len(buffer) + len(token) > max_chars:
-                        yield buffer
-                        buffer = ''
-                buffer += token
-                prev_latin = bool(re.search(r'[A-Za-z0-9]$', token))
-                prev_nonlatin = bool(re.search(r'[^\x00-\x7F]$', token))
-            if buffer:
-                yield buffer
-        except Exception as e:
-            DependencyError(e)
-            if buffer:
-                yield buffer
+        # joins the tokens of one piece: no space between two ideogram tokens, one beside a latin token.
+        # The pieces were already cut at sentence and clause ends, so the join never cuts again
+        buffer = ''
+        prev_latin = False
+        prev_nonlatin = False
+        for token in idg_list:
+            cur_starts_latin = bool(re.match(r'[A-Za-z0-9]', token))
+            cur_starts_nonlatin = bool(re.match(r'[^\x00-\x7F]', token))
+            if buffer and ((prev_latin and (cur_starts_latin or cur_starts_nonlatin)) or (prev_nonlatin and cur_starts_latin)):
+                buffer += ' '
+            buffer += token
+            prev_latin = bool(re.search(r'[A-Za-z0-9]$', token))
+            prev_nonlatin = bool(re.search(r'[^\x00-\x7F]$', token))
+        return buffer
 
     def _is_pure_escaped_sml(s:str)->bool:
-        return bool(s) and all(ord(c) >= sml_escape_tag for c in s)
+        return bool(s) and all(_is_sml_char(c) for c in s)
 
     def _strip_leading_noise(s:str)->str:
         i = 0
         n = len(s)
         while i < n:
             c = s[i]
-            if c.isalnum() or c == '_' or c.isspace() or ord(c) >= sml_escape_tag:
+            if c.isalnum() or c == '_' or c.isspace() or _is_sml_char(c):
                 break
             i += 1
         return s[i:].lstrip()
@@ -2332,7 +2357,7 @@ def get_sentences(session_id:str, text:str)->list|None:
         # in another tone than the clause they belong to
         sentence_end = len(rest)
         for i in range(max_chars + 1, len(rest)):
-            if rest[i] in punctuation_split_hard_set:
+            if rest[i] in punctuation_split_hard_set or (space_ends_sentence and rest[i].isspace()):
                 sentence_end = i + 1
                 break
         lo = merge_threshold + 1
@@ -2361,7 +2386,20 @@ def get_sentences(session_id:str, text:str)->list|None:
         for i in range(hi, lo - 1, -1):
             if rest[i].isspace():
                 return i
-        # 5) last resort -> hard cut at max_chars
+        # 5) no whitespace (a language written without spaces) -> the last word end its tokenizer finds
+        if is_unspaced:
+            idx = -1
+            pos = 0
+            for token in _segment_ideogramms(rest[:sentence_end]):
+                start = rest.find(token, pos)
+                if start == -1 or start + len(token) > hi:
+                    break
+                pos = start + len(token)
+                if pos >= lo:
+                    idx = pos
+            if idx != -1:
+                return idx
+        # 6) last resort -> hard cut at max_chars
         return max_chars
 
     def _force_split_segment(segment:str)->list[str]:
@@ -2374,16 +2412,16 @@ def get_sentences(session_id:str, text:str)->list|None:
                 break
             cut = rest[:max_chars + 1]
             best_idx = -1
-            # 1) regress to the last hard punctuation in the window
+            # 1) regress to the last hard punctuation in the window (a space too where a space ends a sentence)
             for i in range(len(cut) - 1, -1, -1):
-                if cut[i] in hard_set:
+                if cut[i] in hard_set or (space_ends_sentence and cut[i].isspace() and cut[:i].strip()):
                     best_idx = i + 1
                     break
             # 2) no hard punct -> the sentence that opens rest is longer than the window
             if best_idx == -1:
                 best_idx = _clause_cut(rest)
             # Safety: never cut inside an SML group
-            while best_idx < len(rest) and ord(rest[best_idx]) >= sml_escape_tag:
+            while best_idx < len(rest) and _is_sml_char(rest[best_idx]):
                 best_idx += 1
             left = rest[:best_idx].strip()
             right = rest[best_idx:].strip()
@@ -2402,6 +2440,10 @@ def get_sentences(session_id:str, text:str)->list|None:
         if session.get('translate_enabled') and session.get('translate'):
             lang = session['translate']
         tts_engine = session['tts_engine']
+        # languages whose pieces are tokenized into words and joined again, with no space between two non-latin words
+        is_unspaced = lang in ['zho', 'jpn', 'kor', 'tha', 'lao', 'mya', 'khm']
+        # Thai and Lao write no full stop: a space ends a sentence or a clause
+        space_ends_sentence = lang in ['tha', 'lao']
         max_chars = int(language_mapping[lang]['max_chars'] / 2)
         # a piece of merge_threshold or less is too short to be spoken on its own, and a piece may reach
         # merge_ceiling to avoid one: the cut of a long sentence and the merge of short pieces both go by them
@@ -2410,7 +2452,13 @@ def get_sentences(session_id:str, text:str)->list|None:
         conjunctions = language_conjunctions.get(lang)
         conjunction_pattern = re.compile(r'(?<=\s)(?:' + '|'.join(map(re.escape, conjunctions)) + r')(?=\s)', re.IGNORECASE) if conjunctions else None
         text, sml_blocks = escape_sml(text)
+        sml_escape_end = sml_escape_tag + len(sml_blocks)
         assert not SML_TAG_PATTERN.search(text)
+        if lang in ['zho', 'jpn']:
+            # Chinese and Japanese put no space between words. A space between two of their characters, such as
+            # the one normalize_text puts after punctuation, is dropped when a piece is joined again, so it is
+            # dropped here, before the pieces are measured
+            text = re.sub(r'(?<=[^\x00-\x7F])\s+(?=[^\x00-\x7F])', '', text)
         if session['is_gui_process']:
             msg = legends['msg_segment'].format(n=1)
             progress_bar(0, desc=msg)
@@ -2423,12 +2471,12 @@ def get_sentences(session_id:str, text:str)->list|None:
         current_text = []
         while idx < tlen:
             c = text[idx]
-            if ord(c) >= sml_escape_tag and c not in in_text:
+            if _is_sml_char(c) and c not in in_text:
                 if current_text:
                     segments.append(('text', ''.join(current_text)))
                     current_text = []
                 start = idx
-                while idx < tlen and ord(text[idx]) >= sml_escape_tag and text[idx] not in in_text:
+                while idx < tlen and _is_sml_char(text[idx]) and text[idx] not in in_text:
                     idx += 1
                 segments.append(('sml', text[start:idx]))
             else:
@@ -2456,7 +2504,7 @@ def get_sentences(session_id:str, text:str)->list|None:
             cut_idx = -1
             j = len(combined) - 1
             while j >= 0:
-                if ord(combined[j]) >= sml_escape_tag and combined[j] not in in_text:
+                if _is_sml_char(combined[j]) and combined[j] not in in_text:
                     cut_idx = j + 1
                     break
                 j -= 1
@@ -2552,9 +2600,12 @@ def get_sentences(session_id:str, text:str)->list|None:
             merged_list.append(cur)
             i += 1
         final_list = merged_list
-        if lang in ['zho', 'jpn', 'kor', 'tha', 'lao', 'mya', 'khm']:
-            result = []
+        if is_unspaced:
+            # each piece is tokenized and joined again on its own, so a piece still ends where the cut above
+            # ended it: at a sentence end when the sentence fits, else at a clause mark or a word end
+            ideogram_list = []
             for s in final_list:
+                result = []
                 parts = _split_sentence_on_sml(s)
                 for part in parts:
                     part = part.strip()
@@ -2570,9 +2621,8 @@ def get_sentences(session_id:str, text:str)->list|None:
                         tokens = tokens.strip()
                         if tokens:
                             result.append(tokens)
-            ideogram_list = []
-            for s in _join_ideogramms(result):
-                if not _is_latin_only(s):
+                s = _join_ideogramms(result)
+                if s and not _is_latin_only(s):
                     ideogram_list.append(s)
             if ideogram_list:
                 ideogram_list = [restore_sml(s, sml_blocks) for s in ideogram_list]
@@ -3169,12 +3219,92 @@ def restore_sml(text:str, sml_blocks:list[str])->str:
         text = text.replace(chr(sml_escape_tag + i), block)
     return text
 
+def mark_colon_pauses(text:str, sml_blocks:list[str])->str:
+    # text with its SML tags escaped (escape_sml): a [pause:colon_pause] goes after each colon that opens what follows
+    # it, escaped the same way and added to sml_blocks, so the conversions of numbers that come next leave its value
+    # alone. They have not run yet either, so the digits are still there: a colon with no space after it (10:30, 3:1,
+    # John 3:16, https://) is not a pause, and neither is one with a digit on both sides (3 : 1, 3: 1). Tags that close
+    # on the word before the colon ([/emphasis]) are passed over, and the pause goes after the tags right after the colon.
+    # Of those, a [break] (a paragraph or a passage that ends on the colon) gives way to the colon pause; a [pause]
+    # there stays alone
+    token = None
+
+    def _tag(char:str)->re.Match|None:
+        index = ord(char) - sml_escape_tag if char else -1
+        return SML_TAG_PATTERN.fullmatch(sml_blocks[index]) if 0 <= index < len(sml_blocks) else None
+
+    def _repl(m:re.Match)->str:
+        nonlocal token
+        tags, space, nxt = m.group('tags'), m.group('space'), m.group('next')
+        nxt_tag = _tag(nxt)
+        after = [_tag(char) for char in tags] + ([nxt_tag] if nxt_tag else [])
+        if not after and (not space or (m.group('before').isdigit() and nxt.isdigit())):
+            return m.group(0)
+        if any(tag is not None and tag.group('tag') == 'pause' for tag in after):
+            return m.group(0)
+        if token is None:
+            sml_blocks.append(sml_token('pause', f'{colon_pause:g}'))
+            token = chr(sml_escape_tag + len(sml_blocks) - 1)
+        kept = ''.join(char for char in tags if not ((tag := _tag(char)) is not None and tag.group('tag') == 'break'))
+        if nxt_tag is not None and nxt_tag.group('tag') == 'break':
+            return f':{kept}{token}'
+        return f':{kept}{token}{space}{nxt}'
+
+    return colon_pause_re.sub(_repl, text)
+
 def sml_token(tag:str, value:str|None=None, close:bool=False)->str:
     if close:
         return f"[/{tag}]"
     if value is not None:
         return f"[{tag}:{value}]"
     return f"[{tag}]"
+
+def mark_short_question_pauses(text:str, sml_blocks:list[str])->str:
+    # text with its SML tags escaped (escape_sml) and normalized (normalize_text: quotes dropped, abbreviations
+    # spelled out): a [pause:short_question_pause] goes after each question of one or two words that opens a sentence,
+    # escaped the same way and added to sml_blocks, when a sentence starting with a capital or a tag other than a
+    # [break] or a [pause] comes after it. The question opens a sentence when it starts with a capital and, tags set
+    # aside, the text before it ends a sentence or is a [break] or a [pause]: a tag inside a sentence ([/emphasis]
+    # after an italic word) does not start one. A lowercase word after it ("Why? she asked") goes on the same
+    # sentence, and a [break] or a [pause] there is a gap of its own already
+    token = None
+
+    def _tag(char:str)->re.Match|None:
+        index = ord(char) - sml_escape_tag
+        return SML_TAG_PATTERN.fullmatch(sml_blocks[index]) if 0 <= index < len(sml_blocks) else None
+
+    def _opens_sentence(m:re.Match)->bool:
+        if not m.group('question').lstrip('¿ ')[:1].isupper():
+            return False
+        pos = m.start()
+        while pos > 0:
+            char = m.string[pos - 1]
+            pos -= 1
+            if char.isspace():
+                continue
+            tag = _tag(char)
+            if tag is None:
+                return char in '.!?…'
+            if tag.group('tag') in ('break', 'pause'):
+                return True
+        return True
+
+    def _repl(m:re.Match)->str:
+        nonlocal token
+        nxt = m.group('next')
+        tag = _tag(nxt)
+        if tag is not None and tag.group('tag') in ('break', 'pause'):
+            return m.group(0)
+        if tag is None and not (nxt.isupper() or nxt in '¿¡'):
+            return m.group(0)
+        if not _opens_sentence(m):
+            return m.group(0)
+        if token is None:
+            sml_blocks.append(sml_token('pause', f'{short_question_pause:g}'))
+            token = chr(sml_escape_tag + len(sml_blocks) - 1)
+        return f"{m.group('question')}{token}"
+
+    return short_question_re.sub(_repl, text)
 
 def normalize_text(text:str, lang:str, lang_iso1:str, tts_engine:str)->str:
 
