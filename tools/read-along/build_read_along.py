@@ -306,6 +306,13 @@ def main(src_epub, m4b, vtt, out_epub):
 
     ranges, cue_words, matched_words = align(cues, docs)
     unmatched = [c['text'] for i, c in enumerate(cues) if i not in ranges]
+    # A cue whose placed words fall well short of its own words is likely in the wrong place or
+    # cut short (number words, pronunciation substitutions, a phrase that repeats in the book).
+    partial = []
+    for ci, (_, _, _, placed_words) in ranges.items():
+        ratio = placed_words / max(1, len(tokens(cues[ci]['text'])))
+        if ratio < 0.8:
+            partial.append((ratio, cues[ci]['text']))
     skipped = []
     # Wrap from the end of each document back, so earlier offsets stay where they were found.
     for ci in sorted(ranges, key=lambda c: (ranges[c][0], ranges[c][1]), reverse=True):
@@ -406,10 +413,12 @@ def main(src_epub, m4b, vtt, out_epub):
                 zout.writestr(href, xml, compress_type=zipfile.ZIP_DEFLATED)
             zout.write(audio, posixpath.join(opf_dir, AUDIO_HREF), compress_type=zipfile.ZIP_STORED)
 
-    print(f'cues: {len(cues)}  pars: {sum(len(d["pars"]) for d in docs)}  unmatched cues: {len(unmatched)}  unwrapped pieces: {len(skipped)}')
+    print(f'cues: {len(cues)}  pars: {sum(len(d["pars"]) for d in docs)}  unmatched cues: {len(unmatched)}  partly placed cues: {len(partial)}  unwrapped pieces: {len(skipped)}')
     print(f'cue words matched in the book: {matched_words}/{cue_words}  audio: {dur:.1f}s  overlay: {total:.1f}s')
     for t in unmatched:
         print(f'  unmatched: {t}')
+    for ratio, t in partial:
+        print(f'  partial: {ratio:.2f} {t}')
     for t in skipped:
         print(f'  not wrapped: {t}')
 
