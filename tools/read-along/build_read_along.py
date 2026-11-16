@@ -18,6 +18,7 @@ import sys
 import tempfile
 import zipfile
 from pathlib import Path
+from urllib.parse import quote, unquote
 from xml.dom import minidom
 
 XHTML_NS = 'http://www.w3.org/1999/xhtml'
@@ -37,9 +38,10 @@ def parse_ts(ts):
 
 
 def clock(t):
-    h, rem = divmod(t, 3600)
-    m, s = divmod(rem, 60)
-    return f'{int(h)}:{int(m):02d}:{s:06.3f}'
+    ms = round(t * 1000)
+    h, ms = divmod(ms, 3600000)
+    m, ms = divmod(ms, 60000)
+    return f'{h}:{m:02d}:{ms // 1000:02d}.{ms % 1000:03d}'
 
 
 def read_vtt(path):
@@ -77,11 +79,33 @@ def book_text(body):
     return ''.join(n.data for n in nodes), spans
 
 
-def node_at(spans, offset, prefer_end):
-    for start, end, n in spans:
-        if start < offset < end or (offset == start and not prefer_end and end > start) or (offset == end and prefer_end and end > start):
-            return n, offset - start
-    return None, None
+def segments(node, out, state):
+    """Number each text node by the run of inline text it sits in: a block element's start or
+    end, or a <br>, starts a new run, so a word never spans two blocks even when the markup
+    has no whitespace between them."""
+    for child in node.childNodes:
+        if child.nodeType == child.TEXT_NODE:
+            out.append(state[0])
+        elif child.nodeType == child.ELEMENT_NODE:
+            name = local(child)
+            if name in BLOCKS or name == 'br':
+                state[0] += 1
+            segments(child, out, state)
+            if name in BLOCKS:
+                state[0] += 1
+    return out
+
+
+def doc_tokens(body):
+    """Words of the body's text, with offsets into book_text(), never crossing a run of inline text."""
+    text, spans = book_text(body)
+    segs = segments(body, [], [0])
+    out, run_start = [], 0
+    for k, (start, end, _) in enumerate(spans):
+        if k + 1 == len(spans) or segs[k + 1] != segs[k]:
+            out.extend((m.group().lower(), m.start(), m.end()) for m in WORD.finditer(text, run_start, end))
+            run_start = end
+    return out
 
 
 def cut_text(body, offset):
@@ -205,7 +229,7 @@ def align(cues, docs):
     """Give each cue a (doc index, start, end) range in that document's book text, by word alignment."""
     book, owner = [], []
     for di, d in enumerate(docs):
-        for t in tokens(d['text']):
+        for t in doc_tokens(d['body']):
             book.append(t)
             owner.append(di)
     cue_toks, cue_of = [], []
@@ -220,14 +244,13 @@ def align(cues, docs):
             ci = cue_of[blk.a + k]
             hits.setdefault(ci, []).append(blk.b + k)
     ranges = {}
-    last = -1
     for ci in sorted(hits):
         idx = hits[ci]
         # A cue lives in one document; keep the document most of its words matched in.
         di = max(set(owner[i] for i in idx), key=lambda d: sum(owner[i] == d for i in idx))
         idx = [i for i in idx if owner[i] == di]
         # A short common phrase ("the Star of Rest") can match far from the rest of its cue;
-        # keep the first substantial run of hits that sit close together after the previous cue.
+        # keep the first substantial run of hits that sit close together.
         gap = max(5, len(idx))
         runs, run = [], [idx[0]]
         for i in idx[1:]:
@@ -236,10 +259,8 @@ def align(cues, docs):
                 run = []
             run.append(i)
         runs.append(run)
-        after = [r for r in runs if r[0] > last] or runs
-        longest = max(len(r) for r in after)
-        idx = next(r for r in after if len(r) >= min(longest, max(2, longest // 2)))
-        last = idx[-1]
+        longest = max(len(r) for r in runs)
+        idx = next(r for r in runs if len(r) >= min(longest, max(2, longest // 2)))
         ranges[ci] = [di, book[idx[0]][1], book[idx[-1]][2], len(idx)]
     return ranges, len(cue_toks), sum(blk.size for blk in sm.get_matching_blocks())
 
@@ -294,11 +315,13 @@ def main(src_epub, m4b, vtt, out_epub):
     opf = minidom.parseString(zin.read(opf_path))
     manifest = {i.getAttribute('id'): i for i in opf.getElementsByTagNameNS(OPF_NS, 'item')}
     spine = [manifest[r.getAttribute('idref')] for r in opf.getElementsByTagNameNS(OPF_NS, 'itemref')]
+    if not opf.documentElement.getAttribute('version').startswith('3'):
+        sys.exit('The source is not an EPUB 3 package; Media Overlays need EPUB 3.')
     docs = []
     for item in spine:
         if item.getAttribute('media-type') != 'application/xhtml+xml':
             continue
-        href = posixpath.join(opf_dir, item.getAttribute('href'))
+        href = posixpath.normpath(posixpath.join(opf_dir, unquote(item.getAttribute('href'))))
         dom = minidom.parseString(zin.read(href))
         body = dom.getElementsByTagNameNS(XHTML_NS, 'body')[0]
         text, _ = book_text(body)
@@ -314,7 +337,7 @@ def main(src_epub, m4b, vtt, out_epub):
         if ratio < 0.8:
             partial.append((ratio, cues[ci]['text']))
     skipped = []
-    # Wrap from the end of each document back, so earlier offsets stay where they were found.
+    # Wrapping adds elements but no text, so the offsets found above hold in any order.
     for ci in sorted(ranges, key=lambda c: (ranges[c][0], ranges[c][1]), reverse=True):
         di, a, b, _ = ranges[ci]
         d = docs[di]
@@ -369,17 +392,18 @@ def main(src_epub, m4b, vtt, out_epub):
             if not d['pars']:
                 continue
             smil_id = f'mo{n + 1}'
-            doc_href = d['item'].getAttribute('href')
-            smil_href = posixpath.splitext(doc_href)[0] + '.smil'
-            rel_doc = posixpath.basename(doc_href)
-            rel_audio = posixpath.relpath(AUDIO_HREF, posixpath.dirname(doc_href) or '.')
+            # Every path here is a zip path; the SMIL file sits beside its XHTML document.
+            smil_zip = posixpath.splitext(d['href'])[0] + '.smil'
+            smil_href = quote(posixpath.relpath(smil_zip, opf_dir or '.'))
+            rel_doc = quote(posixpath.basename(d['href']))
+            rel_audio = quote(posixpath.relpath(posixpath.join(opf_dir, AUDIO_HREF), posixpath.dirname(d['href']) or '.'))
             pars = []
             doc_dur = 0.0
             for _, _, span_id, start, end in sorted(d['pars']):
                 doc_dur += end - start
                 pars.append(f'<par id="par-{span_id}"><text src="{rel_doc}#{span_id}"/>'
                             f'<audio src="{rel_audio}" clipBegin="{clock(start)}" clipEnd="{clock(end)}"/></par>')
-            smil_files[posixpath.join(opf_dir, smil_href)] = (
+            smil_files[smil_zip] = (
                 '<?xml version="1.0" encoding="utf-8"?>\n'
                 '<smil xmlns="http://www.w3.org/ns/SMIL" xmlns:epub="http://www.idpf.org/2007/ops" version="3.0">\n'
                 f'<body><seq id="seq-{smil_id}" epub:textref="{rel_doc}">\n' + '\n'.join(pars) + '\n</seq></body>\n</smil>\n')

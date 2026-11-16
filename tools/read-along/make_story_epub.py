@@ -1,6 +1,6 @@
 """Build the source EPUB for the read-along test: a plain EPUB 3 whose XHTML carries no
-element ids, as most real ebooks do, so the read-along builder has to find each spoken
-piece in the markup by its text."""
+element ids, so the read-along builder has to find each spoken piece in the markup by its
+text rather than lean on ids a book may not have."""
 import sys
 import zipfile
 from html import escape
