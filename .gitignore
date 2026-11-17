@@ -27,3 +27,5 @@ models/*
 .claude/worktrees/
 .claude/oversee/
 .claude/settings.local.json
+result
+result-*
