@@ -271,7 +271,7 @@ Run Headless mode:
 {wsl_cmd} {wsl_extra} podman-compose -f podman-compose.yml --profile cuda run --rm ebook2audiobook-cuda --headless --ebook "/app/ebooks/myfile.pdf" --voice /app/voices/eng/adult/female/some_voice.wav etc..
 SML tags available:
 [break] — silence (random range 0.3–0.6 sec.)
-[break:inline]: the same silence, between two pieces of one line. The ebook parser writes it between a quote or an italic passage in its own tag and the text around it, and a plain [break] at the end of a paragraph or a line. On the audio.cpp engines (Maya1 among them) an inline [break] is the whole gap there, and a plain [break] keeps the model's own silence beside it, so a paragraph end gets the longer pause; the other engines read both the same
+[break:inline]: the same silence, between two pieces of one line. The ebook parser writes it between a quote or an italic passage in its own tag and the text around it, and a plain [break] at the end of a paragraph or a line. On the audio.cpp engines (Maya1 among them) an inline [break] is the whole gap there, after a sentence end too, and a plain [break] keeps the model's own silence beside it, so a paragraph end gets the longer pause; the other engines read both the same
 [pause] — silence (random range 1.0–1.6 sec.)
 [pause:N] — fixed pause (N sec.)
 [voice:/path/to/voice/file]...[/voice] — switch voice from default or selected voice from GUI/CLI

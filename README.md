@@ -166,7 +166,7 @@ https://github.com/user-attachments/assets/81c4baad-117e-4db5-ac86-efc2b7fea921
 
 ## SML tags available
 - `[break]` — silence (random range **0.3–0.6 sec.**)
-- `[break:inline]`: the same silence, between two pieces of one line. The ebook parser writes it between a quote or an italic passage in its own tag and the text around it, and a plain `[break]` at the end of a paragraph or a line. On the audio.cpp engines (Maya1 among them) an inline `[break]` is the whole gap there, and a plain `[break]` keeps the model's own silence beside it, so a paragraph end gets the longer pause; the other engines read both the same
+- `[break:inline]`: the same silence, between two pieces of one line. The ebook parser writes it between a quote or an italic passage in its own tag and the text around it, and a plain `[break]` at the end of a paragraph or a line. On the audio.cpp engines (Maya1 among them) an inline `[break]` is the whole gap there, after a sentence end too, and a plain `[break]` keeps the model's own silence beside it, so a paragraph end gets the longer pause; the other engines read both the same
 - `[pause]` — silence (random range **1.0–1.6 sec.**)
 - `[pause:N]`: fixed pause (**N sec.**). On the audio.cpp engines (Maya1 among them), a `[pause:N]` inside a sentence, after a comma, a semicolon or a colon, is the whole gap there; the other engines add their own short silence after the text before it. The ebook parser writes a `[pause:0.65]` after a colon that opens what follows it, in place of a `[break]` there; a colon inside a time, a ratio, a verse reference (`10:30`, `3:1`, `John 3:16`) or a link gets none, and with `--translate` no colon gets one, as the tag would cut the sentence the translator reads
 - `[voice:/path/to/voice/file]...[/voice]` — switch voice from default or selected voice from GUI/CLI
@@ -532,7 +532,7 @@ pip/pipx install (all OS, python 3.8+, no clone needed):
 
 SML tags available:
 	[break] — silence (random range **0.3–0.6 sec.**)
-	[break:inline]: the same silence, between two pieces of one line. The ebook parser writes it between a quote or an italic passage in its own tag and the text around it, and a plain [break] at the end of a paragraph or a line. On the audio.cpp engines (Maya1 among them) an inline [break] is the whole gap there, and a plain [break] keeps the model's own silence beside it, so a paragraph end gets the longer pause; the other engines read both the same
+	[break:inline]: the same silence, between two pieces of one line. The ebook parser writes it between a quote or an italic passage in its own tag and the text around it, and a plain [break] at the end of a paragraph or a line. On the audio.cpp engines (Maya1 among them) an inline [break] is the whole gap there, after a sentence end too, and a plain [break] keeps the model's own silence beside it, so a paragraph end gets the longer pause; the other engines read both the same
 	[pause] — silence (random range **1.0–1.6 sec.**)
 	[pause:N] — fixed pause (**N sec.**)
 	[voice:/path/to/voice/file]...[/voice] — switch voice from default or selected voice from GUI/CLI

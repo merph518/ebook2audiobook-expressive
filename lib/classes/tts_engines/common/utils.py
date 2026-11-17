@@ -1025,13 +1025,14 @@ class TTSUtils:
     def _clause_break(self, sentence_parts:list[str], index:int, step:int, parts_before:list[str]|None=None)->bool:
         # True when the nearest part that adds audio after (step 1) or before (step -1) sentence_parts[index] is a gap
         # inside a line, which is then the whole gap there: a [break:inline], which the ebook parser writes between a
-        # quote or an italic passage in its own tag and the text around it, or a [pause] with a written length after
-        # text that ends in punctuation that does not end a sentence once closing quotes and brackets are set aside (a
-        # comma, a colon). A [break] ends a paragraph or a line and keeps its full pause, as does any tag next to a
-        # [pause]; a [pause] with no length keeps its full gap everywhere. Blank parts, parts with nothing to speak and
-        # tags that add no audio are passed over; parts_before, the parts of the sentence before this one, are read when
-        # step -1 runs past the start. A tag that opens the next sentence is not seen from the end of this one (step 1
-        # stops at the sentence end)
+        # quote or an italic passage in its own tag and the text around it, whatever punctuation is before it (a quote
+        # that ends a sentence and the sentence after it in the same paragraph are read close), or a [pause] with a
+        # written length after text that ends in punctuation that does not end a sentence once closing quotes and
+        # brackets are set aside (a comma, a colon). A [break] ends a paragraph or a line and keeps its full pause, as
+        # does any tag next to a [pause]; a [pause] with no length keeps its full gap everywhere. Blank parts, parts with
+        # nothing to speak and tags that add no audio are passed over; parts_before, the parts of the sentence before
+        # this one, are read when step -1 runs past the start. A tag that opens the next sentence is not seen from the
+        # end of this one (step 1 stops at the sentence end)
         parts = (parts_before or []) + sentence_parts
 
         def _next_audio(pos:int, step:int)->int:
