@@ -206,6 +206,11 @@ class AudioCpp(TTSUtils):
                     self.params['current_voice'], error = self._set_voice(self.params['block_voice'])
                     if self.params['current_voice'] is None and error is not None:
                         return False, error
+                    if self.params['current_voice'] is None and self.family_cfg['narrator']:
+                        # a family that designs its voice from a description (maya1) designs it anew for every
+                        # request, so timbre and pitch drift from sentence to sentence: with no voice file picked,
+                        # every sentence is converted (Seed-VC) to one clip of that voice shipped with e2a
+                        self.params['current_voice'] = self.family_cfg['narrator']
                 self.audio_segments = []
                 parts_before = self._split_sentence_on_sml(kwargs.get('sentence_before', ''))
                 for index, part in enumerate(sentence_parts):
