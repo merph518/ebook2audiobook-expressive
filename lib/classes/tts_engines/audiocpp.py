@@ -190,6 +190,15 @@ class AudioCpp(TTSUtils):
         self.params['direction_request'] = (direction, request, token)
         return request, token
 
+    def _set_voice(self, voice:str|None)->tuple:
+        current_voice, error = super()._set_voice(voice)
+        if current_voice is None and error is None and self.family_cfg['narrator']:
+            # a family that designs its voice from a description (maya1) designs it anew for every request, so
+            # timbre and pitch drift from sentence to sentence: with no voice file picked, every part is converted
+            # (Seed-VC) to one clip of that voice shipped with e2a
+            current_voice = self.family_cfg['narrator']
+        return current_voice, error
+
     def convert(self, sentence_file:str, sentence:str, **kwargs)->tuple:
         part_file = f'{os.path.splitext(sentence_file)[0]}.{self.session["tts_engine"]}.wav'
         try:
@@ -206,11 +215,6 @@ class AudioCpp(TTSUtils):
                     self.params['current_voice'], error = self._set_voice(self.params['block_voice'])
                     if self.params['current_voice'] is None and error is not None:
                         return False, error
-                    if self.params['current_voice'] is None and self.family_cfg['narrator']:
-                        # a family that designs its voice from a description (maya1) designs it anew for every
-                        # request, so timbre and pitch drift from sentence to sentence: with no voice file picked,
-                        # every sentence is converted (Seed-VC) to one clip of that voice shipped with e2a
-                        self.params['current_voice'] = self.family_cfg['narrator']
                 self.audio_segments = []
                 parts_before = self._split_sentence_on_sml(kwargs.get('sentence_before', ''))
                 for index, part in enumerate(sentence_parts):
