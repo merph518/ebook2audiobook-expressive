@@ -77,7 +77,11 @@ TTS_VOICE_CONVERSION = {
 }
 
 TTS_SML = {
-    "break": {"static": "[break]", "paired": False},
+    # a short silence. The ebook parser writes [break:inline] for one between two pieces of a line (a quote or an
+    # italic passage in its own tag and the text around it) and [break] for the end of a paragraph, a line or another
+    # block. The audio.cpp engines make an inline [break] the whole gap there and keep the model's own silence beside a
+    # [break]; the other engines read both the same
+    "break": {"static": "[break]", "paired": False, "values": ["inline"]},
     "pause": {"static": "[pause]", "paired": False},
     "voice": {"paired": True},
     # zonos only (ignored by the other engines): [emotion:sad]...[/emotion] or a mix [emotion:sad=0.7,angry=0.2].

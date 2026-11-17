@@ -1900,8 +1900,11 @@ def get_blocks(session_id:str, epubBook:EpubBook)->list:
 def filter_blocks(session_id:str, idx:int, doc:EpubHtml, stanza_nlp:Pipeline, is_num2words_compat:bool, non_text_filter:NonTextFilter, zf:zipfile.ZipFile=None, zip_names:set=None, zip_basenames:dict=None, note_targets:dict|None=None, italic_classes:dict|None=None)->str|None:
 
     def _tuple_row(node:Any, last_text_char:str|None=None, in_heading:bool=False)->Generator[tuple[str, Any], None, None]|None:
+        # a [break] between two children that both sit inside a line (text or an inline tag) is [break:inline]; one
+        # next to anything else (a paragraph, a <br>, a heading, a table, a block) ends a line and is [break]
         try:
             prev_child_had_data = False
+            prev_child_inline = False
             for idx, child in enumerate(node.children):
                 current_child_had_data = False
                 if isinstance(child, NavigableString):
@@ -1909,7 +1912,7 @@ def filter_blocks(session_id:str, idx:int, doc:EpubHtml, stanza_nlp:Pipeline, is
                     if text:
                         # Only add break if not inside a heading and previous had data
                         if prev_child_had_data and not in_heading:
-                            yield ('break', sml_token("break"))
+                            yield ('break', sml_token('break', 'inline') if prev_child_inline else sml_token('break'))
                         # Yield as heading if inside heading, else text
                         yield ('heading' if in_heading else 'text', text)
                         last_text_char = text[-1]
@@ -1941,7 +1944,7 @@ def filter_blocks(session_id:str, idx:int, doc:EpubHtml, stanza_nlp:Pipeline, is
                             is_header = False
                             # Add break before processing tag content if needed
                             if prev_child_had_data and name in break_tags and not in_heading:
-                                yield ('break', sml_token("break"))
+                                yield ('break', sml_token('break', 'inline') if prev_child_inline and name in inline_tags else sml_token('break'))
                             for inner in _tuple_row(child, last_text_char, in_heading=in_heading):
                                 return_data = True
                                 yield inner
@@ -1961,6 +1964,7 @@ def filter_blocks(session_id:str, idx:int, doc:EpubHtml, stanza_nlp:Pipeline, is
                             current_child_had_data = True
                 if current_child_had_data:
                     prev_child_had_data = True
+                    prev_child_inline = isinstance(child, NavigableString) or child.name.lower() in inline_tags
         except Exception as e:
             error = f'filter_blocks() _tuple_row() error: {e}'
             DependencyError(error)
@@ -2074,18 +2078,24 @@ def filter_blocks(session_id:str, idx:int, doc:EpubHtml, stanza_nlp:Pipeline, is
             text_list = []
             handled_tables = set()
             prev_typ = None
+            inline_break = sml_token('break', 'inline')
+            gap_tokens = {v['static'] for v in TTS_SML.values() if 'static' in v} | {inline_break}
             for typ, payload in tuples_list:
                 if typ == 'heading':
                     text_list.append(payload.strip())
                 elif typ in ('break', 'pause'):
                     # Original logic: add token if different from previous type
                     if prev_typ != typ:
-                        token = sml_token(typ)
-                        if text_list and text_list[-1] not in {v['static'] for v in TTS_SML.values() if 'static' in v}:
+                        token = payload
+                        if text_list and text_list[-1] not in gap_tokens:
                             sep = '; ' if prev_typ == 'heading' else ''
                             text_list[-1] = text_list[-1] + sep + token
                         else:
                             text_list.append(token)
+                    elif typ == 'break' and payload != inline_break and text_list[-1].endswith(inline_break):
+                        # an inline [break] right before a line end ([span] left empty at the end of a paragraph)
+                        # gives way to it
+                        text_list[-1] = text_list[-1][:-len(inline_break)] + payload
                 elif typ == 'table':
                     table = payload
                     if table in handled_tables:
@@ -2119,10 +2129,10 @@ def filter_blocks(session_id:str, idx:int, doc:EpubHtml, stanza_nlp:Pipeline, is
             i = 0
             while i < len(text_list):
                 current = text_list[i]
-                if current in {v['static'] for v in TTS_SML.values() if "static" in v}:
+                if current in gap_tokens:
                     if clean_list:
                         prev = clean_list[-1]
-                        if prev in {v['static'] for v in TTS_SML.values() if "static" in v}:
+                        if prev in gap_tokens:
                             i += 1
                             continue
                     clean_list.append(current)
@@ -2141,10 +2151,10 @@ def filter_blocks(session_id:str, idx:int, doc:EpubHtml, stanza_nlp:Pipeline, is
                 show_alert(session_id, {"type": "warning", "msg": text})
                 return None
             # remove any [break] between words or cutting words; an [emphasis] tag beside it belongs to the word
-            break_token = re.escape(sml_token('break'))
-            strip_break_spaces_re = re.compile(rf'\s*{break_token}\s*')
-            break_between_alnum_re = re.compile(rf'(?:(?<=\w)|(?<=\w{re.escape(sml_token("emphasis", close=True))})){break_token}(?=(?:{re.escape(sml_token("emphasis"))})?\w)', flags=re.UNICODE)
-            text = strip_break_spaces_re.sub(sml_token('break'), text)
+            break_token = rf"{re.escape(sml_token('break'))}|{re.escape(inline_break)}"
+            strip_break_spaces_re = re.compile(rf'\s*({break_token})\s*')
+            break_between_alnum_re = re.compile(rf'(?:(?<=\w)|(?<=\w{re.escape(sml_token("emphasis", close=True))}))(?:{break_token})(?=(?:{re.escape(sml_token("emphasis"))})?\w)', flags=re.UNICODE)
+            text = strip_break_spaces_re.sub(r'\1', text)
             text = break_between_alnum_re.sub(' ', text)
             # strip non-prose content; preserves math signs for math2words
             text = non_text_filter(text)
@@ -3198,8 +3208,9 @@ def normalize_sml_tags(text:str)->tuple[bool, str]:
                 error = f'normalize_sml_tags() error: non-paired tag [/{tag}] is invalid'
                 return False, error
             # keep a duration ([pause:10], [pause:10s], [pause:1,5 sec], [pause:500ms]) normalized to seconds:
-            # the engines' _convert_sml() reads it with float(). anything else falls back to the static tag,
-            # as before, so a stray "[pause: xyz]" in an ebook never aborts the conversion.
+            # the engines' _convert_sml() reads it with float(), and a value the tag lists ([break:inline]) as it is.
+            # anything else falls back to the static tag, as before, so a stray "[pause: xyz]" in an ebook never
+            # aborts the conversion.
             seconds = None
             if value is not None and value.strip():
                 duration = re.fullmatch(r'\s*(\d+(?:[.,]\d+)?)\s*(ms|s|sec|secs|second|seconds)?\s*', value, flags=re.IGNORECASE)
@@ -3209,6 +3220,8 @@ def normalize_sml_tags(text:str)->tuple[bool, str]:
                         seconds /= 1000
             if seconds is not None and math.isfinite(seconds) and seconds > 0:
                 out.append(f"[{tag}:{seconds:g}]")
+            elif value is not None and value.strip().lower() in info.get('values', []):
+                out.append(f"[{tag}:{value.strip().lower()}]")
             else:
                 out.append(info['static'])
         last = end
@@ -4154,9 +4167,9 @@ def convert_chapters2audio(session_id:str)->bool:
                                 show_alert(session_id, {'type': 'info', 'msg': legends['msg_resuming_from'].format(sentence=global_sent)})
                             sentence_file = os.path.join(block_dir, f'{j}.{default_audio_proc_format}')
                             spoken = engine_sentences[j]
-                            # sentence_before: a [break] that ends the sentence before this one in the block, after a part
-                            # that does not end a sentence, is the whole gap, so the engine trims the silence the model leaves
-                            # at the start of this one
+                            # sentence_before: a [break:inline] that ends the sentence before this one in the block, or a
+                            # [pause:N] there after a part that does not end a sentence, is the whole gap, so the engine trims
+                            # the silence the model leaves at the start of this one
                             sentence_before = engine_sentences[j - 1] if j > 0 else ''
                             run, error = tts_manager.convert_sentence2audio(sentence_file, spoken, block_voice=block_voice, sentence_before=sentence_before)
                             if not run:
