@@ -21,6 +21,7 @@ models/*
 !audiobooks/cli/.gitkeep
 !audiobooks/gui/gradio/.gitkeep
 !audiobooks/gui/host/.gitkeep
+!lib/classes/tts_engines/presets/maya1_narrator.flac
 .installed
 .env
 .gpu_choice

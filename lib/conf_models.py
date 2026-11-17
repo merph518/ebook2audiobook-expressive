@@ -1095,8 +1095,9 @@ audiocpp_families = {
     # the model reads the language from the text; "default" is a German voice, english_female a British one
     TTS_ENGINES['KUGELAUDIO']: {"family": "kugelaudio", "languages": {"eng": "", "deu": "", "fra": "", "spa": "", "ita": "", "por": "", "nld": "", "pol": "", "rus": "", "ukr": "", "ces": "", "ron": "", "hun": "", "swe": "", "dan": "", "fin": "", "nob": "", "nor": "", "ell": "", "bul": "", "slk": "", "hrv": "", "srp": "", "tur": ""}, "clone": False, "voice_ids": {"eng": "english_female", "*": "default"}, "samplerate": 24000, "rating": {"VRAM": 6, "CPU": 1, "RAM": 8, "Realism": 4}},
     TTS_ENGINES['MAGPIE_TTS']: {"family": "magpie_tts", "languages": {"ara": "ar-MSA", "deu": "de", "eng": "en", "spa": "es", "fra": "fr", "hin": "hi", "ita": "it", "kor": "ko", "por": "pt-BR", "vie": "vi", "zho": "zh"}, "clone": False, "voice_ids": {"*": "Aria"}, "samplerate": 22050, "rating": {"VRAM": 2, "CPU": 3, "RAM": 4, "Realism": 4}},
-    # voice designed from a description (required by the model), converted by Seed-VC when a voice file is picked
-    TTS_ENGINES['MAYA1']: {"family": "maya1", "languages": {"eng": "en"}, "clone": False, "request": {"instruct": "Calm adult narrator with a neutral American accent, warm timbre and steady audiobook pacing."}, "samplerate": 24000, "rating": {"VRAM": 6, "CPU": 1, "RAM": 8, "Realism": 5}},
+    # voice designed from a description (required by the model), anew for every request: converted by Seed-VC to the
+    # picked voice file, or with none to "narrator", a clip of that voice, so it does not drift from sentence to sentence
+    TTS_ENGINES['MAYA1']: {"family": "maya1", "languages": {"eng": "en"}, "clone": False, "request": {"instruct": "Calm adult narrator with a neutral American accent, warm timbre and steady audiobook pacing."}, "narrator": os.path.join(os.path.dirname(os.path.abspath(__file__)), 'classes', 'tts_engines', 'presets', 'maya1_narrator.flac'), "samplerate": 24000, "rating": {"VRAM": 6, "CPU": 1, "RAM": 8, "Realism": 5}},
     TTS_ENGINES['MIOTTS']: {"family": "miotts", "languages": {"eng": "", "jpn": ""}, "clone": True, "ref_text": None, "ref_fallback": {}, "samplerate": 44100, "rating": {"VRAM": 4, "CPU": 2, "RAM": 6, "Realism": 4}},
     # the language goes verbatim into the prompt template: "" lets the model detect it
     TTS_ENGINES['MOSS_TTS_LOCAL']: {"family": "moss_tts_local", "languages": {"ara": "", "ces": "", "dan": "", "deu": "", "ell": "", "eng": "", "spa": "", "fas": "", "fin": "", "fra": "", "heb": "", "hin": "", "hun": "", "ita": "", "jpn": "", "kor": "", "mkd": "", "zlm": "", "nld": "", "pol": "", "por": "", "ron": "", "rus": "", "swe": "", "swh": "", "tha": "", "tgl": "", "fil": "", "tur": "", "vie": "", "yue": "", "zho": ""}, "clone": True, "ref_text": None, "ref_fallback": {}, "samplerate": 24000, "rating": {"VRAM": 4, "CPU": 2, "RAM": 6, "Realism": 4}},
@@ -1112,7 +1113,7 @@ audiocpp_families = {
 }
 audiocpp_engines = list(audiocpp_families)
 for _acpp_engine, _acpp_cfg in audiocpp_families.items():
-    _acpp_cfg = {"language_option": False, "voice_ids": {}, "ref_text": None, "ref_fallback": {}, "ref_min": 3.2, "ref_max": 10.0, "load": {}, "session": {}, "request": {}, "load_by_language": {}, "speaker_label": False, "espeak": False, **_acpp_cfg}
+    _acpp_cfg = {"language_option": False, "voice_ids": {}, "ref_text": None, "ref_fallback": {}, "ref_min": 3.2, "ref_max": 10.0, "load": {}, "session": {}, "request": {}, "load_by_language": {}, "speaker_label": False, "espeak": False, "narrator": None, **_acpp_cfg}
     audiocpp_families[_acpp_engine] = _acpp_cfg
     default_engine_settings[_acpp_engine] = {
         "devices": native_devices,

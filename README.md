@@ -296,7 +296,8 @@ Another way to install and launch ebook2audiobook, without cloning the repo: pip
      ```
      
   - **[--ebook]**: Path to your eBook file
-  - **[--voice]**: Voice cloning file path (optional)
+  - **[--voice]**: Voice cloning file path (optional)<br>
+    Maya1 designs its voice from a description, anew for every sentence. With no voice file it converts every sentence to one narrator clip of that voice (`lib/classes/tts_engines/presets/maya1_narrator.flac`), so the voice stays the same through the book.
   - **[--language]**: Language code in ISO-639-3 (i.e.: ita for italian, eng for english, deu for german...).<br>
     Default language is eng and --language is optional for default language set in ./lib/lang.py.<br>
     The ISO-639-1 2 letters codes are also supported.
